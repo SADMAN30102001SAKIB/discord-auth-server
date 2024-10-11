@@ -9,7 +9,7 @@ import discord
 import openpyxl
 from discord.ext import commands
 from filelock import FileLock
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -28,10 +28,10 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 ROLE_NAME = "Subscriber"
-TOKEN_FILE = "token.xlsx"
+TOKEN_FILE = "tokens.xlsx"
 USER_FILE = "users.xlsx"
 
-token_cache = set()
+tokens_cache = set()
 
 
 def generate_unique_token(length=10):
@@ -61,7 +61,7 @@ def load_existing_tokens():
 
 
 def add_token_to_file(token):
-    global token_cache
+    global tokens_cache
     if not os.path.exists(TOKEN_FILE):
         workbook = openpyxl.Workbook()
         sheet = workbook.active
@@ -70,8 +70,8 @@ def add_token_to_file(token):
         workbook = openpyxl.load_workbook(TOKEN_FILE)
         sheet = workbook.active
 
-    token_cache = set(token_cache)
-    token_cache.add(token)
+    tokens_cache = set(tokens_cache)
+    tokens_cache.add(token)
     sheet.append([token])
     workbook.save(TOKEN_FILE)
     print(f"New token '{token}' has been added to {TOKEN_FILE}.")
@@ -104,12 +104,16 @@ def get_tokens():
     if api_key != API_KEY:
         return jsonify({"error": "Unauthorized"}), 403
 
-    existing_tokens = token_cache
+    existing_tokens = tokens_cache
     return jsonify(list(existing_tokens))
 
 
 @app.route("/showusers", methods=["GET"])
 def get_users():
+    api_key = request.args.get("api_key")
+    if api_key != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 403
+
     if not os.path.exists(USER_FILE):
         return jsonify([])
     workbook = openpyxl.load_workbook(USER_FILE)
@@ -121,18 +125,36 @@ def get_users():
     return jsonify(users)
 
 
+@app.route("/downloadtokens", methods=["GET"])
+def download_token():
+    api_key = request.args.get("api_key")
+    if api_key != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 403
+    path = "tokens.xlsx"
+    return send_file(path, as_attachment=True)
+
+
+@app.route("/downloadusers", methods=["GET"])
+def download_users():
+    api_key = request.args.get("api_key")
+    if api_key != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 403
+    path = "users.xlsx"
+    return send_file(path, as_attachment=True)
+
+
 @app.route("/", methods=["GET"])
 def hello_world():
     return "AuthBot OK!"
 
 
 def load_tokens():
-    global token_cache
+    global tokens_cache
     if not os.path.exists(TOKEN_FILE):
         workbook = openpyxl.Workbook()
         sheet = workbook.active
         workbook.save(TOKEN_FILE)
-        token_cache = set()
+        tokens_cache = set()
     if not os.path.exists(USER_FILE):
         workbook = openpyxl.Workbook()
         sheet = workbook.active
@@ -141,10 +163,10 @@ def load_tokens():
 
     workbook = openpyxl.load_workbook(TOKEN_FILE)
     sheet = workbook.active
-    token_cache = [row[0].value for row in sheet.iter_rows(min_row=1, max_col=1)]
-    if token_cache[0] == None:
-        token_cache = []
-    # print(token_cache)
+    tokens_cache = [row[0].value for row in sheet.iter_rows(min_row=1, max_col=1)]
+    if tokens_cache[0] == None:
+        tokens_cache = []
+    # print(tokens_cache)
     # workbook = openpyxl.load_workbook(USER_FILE)
     # sheet = workbook.active
     # print(
@@ -197,7 +219,7 @@ async def on_message(message):
         return
 
     if message.channel.name == "verify":
-        global token_cache
+        global tokens_cache
         submitted_token = message.content.strip()
 
         if len(submitted_token) != 10:
@@ -221,7 +243,7 @@ async def on_message(message):
                     )
                 return
 
-        if submitted_token in token_cache:
+        if submitted_token in tokens_cache:
             role = discord.utils.get(message.guild.roles, name=ROLE_NAME)
             if role:
                 await message.author.add_roles(role)
@@ -229,9 +251,9 @@ async def on_message(message):
                     f"✅ {message.author.mention}, you have been verified and assigned the Subscriber role!"
                 )
 
-                token_cache = set(token_cache)
-                token_cache.remove(submitted_token)
-                save_tokens(token_cache)
+                tokens_cache = set(tokens_cache)
+                tokens_cache.remove(submitted_token)
+                save_tokens(tokens_cache)
 
                 log_user(str(message.author), submitted_token)
             else:
