@@ -149,9 +149,6 @@ def log_user():
 def save_tokens_api():
     tokens = request.json.get("tokens", [])
 
-    if not tokens:
-        return jsonify({"error": "No tokens provided"}), 400
-
     save_tokens(tokens)
     return jsonify({"message": "Tokens saved successfully"})
 
