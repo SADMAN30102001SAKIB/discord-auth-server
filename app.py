@@ -1,36 +1,18 @@
-import asyncio
 import os
 import random
 import string
-import sys
-import threading
 
-import discord
 import openpyxl
-from discord.ext import commands
 from filelock import FileLock
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
 app = Flask(__name__)
-
 CORS(app)
 
 API_KEY = os.getenv("API_KEY", "TapSs@14023010.com")
-TOKEN = os.getenv(
-    "DISCORD_TOKEN",
-    "MTI5NDAxNjE4MDE5NzEzMDI1MQ.GB93Tg.wTqieZt3A3BvSMxP6cNr5O7LVsNXRzslBaVGQM",
-)
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.members = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-ROLE_NAME = "Subscriber"
 TOKEN_FILE = "tokens.xlsx"
 USER_FILE = "users.xlsx"
-
 tokens_cache = set()
 
 
@@ -60,23 +42,6 @@ def load_existing_tokens():
     return existing_tokens
 
 
-def add_token_to_file(token):
-    global tokens_cache
-    if not os.path.exists(TOKEN_FILE):
-        workbook = openpyxl.Workbook()
-        sheet = workbook.active
-        sheet.title = "Tokens"
-    else:
-        workbook = openpyxl.load_workbook(TOKEN_FILE)
-        sheet = workbook.active
-
-    tokens_cache = set(tokens_cache)
-    tokens_cache.add(token)
-    sheet.append([token])
-    workbook.save(TOKEN_FILE)
-    print(f"New token '{token}' has been added to {TOKEN_FILE}.")
-
-
 def create_unique_token():
     existing_tokens = load_existing_tokens()
 
@@ -89,13 +54,31 @@ def create_unique_token():
             print(f"Token {new_token} already exists, generating a new one...")
 
 
+def add_token_to_file(token):
+    global tokens_cache
+    lock_file = f"{TOKEN_FILE}.lock"
+    with FileLock(lock_file):
+        if not os.path.exists(TOKEN_FILE):
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.title = "Tokens"
+        else:
+            workbook = openpyxl.load_workbook(TOKEN_FILE)
+            sheet = workbook.active
+
+        tokens_cache = set(tokens_cache)
+        tokens_cache.add(token)
+        sheet.append([token])
+        workbook.save(TOKEN_FILE)
+
+
 @app.route("/generatetoken", methods=["GET"])
 def generate_token():
     api_key = request.args.get("api_key")
     if api_key != API_KEY:
         return jsonify({"error": "Unauthorized"}), 403
 
-    return f"Token: {create_unique_token()} added to the token file."
+    return jsonify({"generated token": create_unique_token()})
 
 
 @app.route("/showtokens", methods=["GET"])
@@ -116,6 +99,7 @@ def get_users():
 
     if not os.path.exists(USER_FILE):
         return jsonify([])
+
     workbook = openpyxl.load_workbook(USER_FILE)
     sheet = workbook.active
     users = [
@@ -130,8 +114,7 @@ def download_token():
     api_key = request.args.get("api_key")
     if api_key != API_KEY:
         return jsonify({"error": "Unauthorized"}), 403
-    path = "tokens.xlsx"
-    return send_file(path, as_attachment=True)
+    return send_file(TOKEN_FILE, as_attachment=True)
 
 
 @app.route("/downloadusers", methods=["GET"])
@@ -139,8 +122,55 @@ def download_users():
     api_key = request.args.get("api_key")
     if api_key != API_KEY:
         return jsonify({"error": "Unauthorized"}), 403
-    path = "users.xlsx"
-    return send_file(path, as_attachment=True)
+    return send_file(USER_FILE, as_attachment=True)
+
+
+@app.route("/loguser", methods=["POST"])
+def log_user():
+    data = request.json
+    username = data.get("username")
+    token = data.get("token")
+
+    with FileLock(f"{USER_FILE}.lock"):
+        if not os.path.exists(USER_FILE):
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.append(["Username", "Token"])
+        else:
+            workbook = openpyxl.load_workbook(USER_FILE)
+            sheet = workbook.active
+
+        sheet.append([username, token])
+        workbook.save(USER_FILE)
+    return jsonify({"message": "User logged successfully"})
+
+
+@app.route("/savetokens", methods=["POST"])
+def save_tokens_api():
+    tokens = request.json.get("tokens", [])
+
+    if not tokens:
+        return jsonify({"error": "No tokens provided"}), 400
+
+    save_tokens(tokens)
+    return jsonify({"message": "Tokens saved successfully"})
+
+
+def save_tokens(tokens):
+    if not os.path.exists(TOKEN_FILE):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "Tokens"
+        workbook.save(TOKEN_FILE)
+
+    lock_file = f"{TOKEN_FILE}.lock"
+    with FileLock(lock_file):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        for token in tokens:
+            sheet.append([token])
+        workbook.save(TOKEN_FILE)
+    load_tokens()
 
 
 @app.route("/", methods=["GET"])
@@ -166,150 +196,8 @@ def load_tokens():
     tokens_cache = [row[0].value for row in sheet.iter_rows(min_row=1, max_col=1)]
     if tokens_cache[0] == None:
         tokens_cache = []
-    # print(tokens_cache)
-    # workbook = openpyxl.load_workbook(USER_FILE)
-    # sheet = workbook.active
-    # print(
-    #     [(row[0].value, row[1].value) for row in sheet.iter_rows(min_row=2, max_col=2)]
-    # )
 
 
-def save_tokens(tokens):
-    if not os.path.exists(TOKEN_FILE):
-        workbook = openpyxl.Workbook()
-        sheet = workbook.active
-        sheet.title = "Tokens"
-        workbook.save(TOKEN_FILE)
-    lock_file = f"{TOKEN_FILE}.lock"
-
-    with FileLock(lock_file):
-        workbook = openpyxl.Workbook()
-        sheet = workbook.active
-        for token in tokens:
-            sheet.append([token])
-        workbook.save(TOKEN_FILE)
-
-
-def log_user(username, token):
-    if not os.path.exists(USER_FILE):
-        workbook = openpyxl.Workbook()
-        sheet = workbook.active
-        sheet.append(["Username", "Token"])
-    else:
-        workbook = openpyxl.load_workbook(USER_FILE)
-        sheet = workbook.active
-
-    sheet.append([username, token])
-    workbook.save(USER_FILE)
-
-
-@bot.event
-async def on_ready():
-    print(f"Bot is ready. Logged in as {bot.user}")
+if __name__ == "__main__":
     load_tokens()
-
-
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-
-    if message.content.startswith("!"):
-        await bot.process_commands(message)
-        return
-
-    if message.channel.name == "verify":
-        global tokens_cache
-        submitted_token = message.content.strip()
-
-        if len(submitted_token) != 10:
-            await message.channel.send(
-                "❌ Invalid token. Token must be exactly 10 characters long."
-            )
-            return
-
-        role_names_to_check = ["Admin", "Mod", "Bot", ROLE_NAME]
-
-        for role_name in role_names_to_check:
-            role = discord.utils.get(message.guild.roles, name=role_name)
-            if role and role in message.author.roles:
-                if role_name == ROLE_NAME:
-                    await message.channel.send(
-                        f"⚠️ {message.author.mention}, you are already a Subscriber."
-                    )
-                else:
-                    await message.channel.send(
-                        f"⚠️ {message.author.mention}, you are already in a privileged role."
-                    )
-                return
-
-        if submitted_token in tokens_cache:
-            role = discord.utils.get(message.guild.roles, name=ROLE_NAME)
-            if role:
-                await message.author.add_roles(role)
-                await message.channel.send(
-                    f"✅ {message.author.mention}, you have been verified and assigned the Subscriber role!"
-                )
-
-                tokens_cache = set(tokens_cache)
-                tokens_cache.remove(submitted_token)
-                save_tokens(tokens_cache)
-
-                log_user(str(message.author), submitted_token)
-            else:
-                await message.channel.send(
-                    f'❌ Role "{ROLE_NAME}" not found. Please contact an admin.'
-                )
-        else:
-            await message.channel.send(
-                "❌ Invalid token. Please check your token and try again."
-            )
-
-    await bot.process_commands(message)
-
-
-@bot.command(name="cleanverify")
-@commands.has_permissions(manage_messages=True)
-async def clean_verify(ctx, limit: int):
-    if ctx.channel.name != "verify":
-        await ctx.send(
-            "❌ This command can only be used in the #verify channel.", delete_after=5
-        )
-        return
-
-    total_deleted = 0
-    while limit > 0:
-        delete_count = min(limit, 100)
-        deleted = await ctx.channel.purge(limit=delete_count)
-        total_deleted += len(deleted)
-        limit -= delete_count
-
-    await ctx.send(f"✅ Deleted {total_deleted} messages.", delete_after=5)
-
-
-@clean_verify.error
-async def clean_verify_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send(
-            "❌ You do not have permission to run this command.", delete_after=5
-        )
-
-
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-
-def run_flask():
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), threaded=True)
-
-
-def main():
-    load_tokens()
-
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.start()
-
-    asyncio.run(bot.start(TOKEN))
-
-
-main()
+    app.run(port=int(os.environ.get("PORT", 8080)))
