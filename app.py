@@ -10,7 +10,7 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-API_KEY = os.getenv("API_KEY", "TapSs@14023010.com")
+API_KEY = os.getenv("API_KEY", "")
 TOKEN_FILE = "tokens.xlsx"
 USER_FILE = "users.xlsx"
 tokens_cache = set()
